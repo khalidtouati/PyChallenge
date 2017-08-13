@@ -23,6 +23,12 @@
       "Description" : "Number of EC2 instances to launch for the Frontend server",
       "Type" : "Number",
       "Default" : "2"
+	  },
+	  
+	  "ApacheAccessLogs" : {
+      "Description" : "The name of the CLoud Watch Log Group where apache access logs will be pushed to",
+      "Type" : "String",
+      "Default" : "ApacheAccessLogs_LG"
     },
 
 		"SSHLocation": {
@@ -908,12 +914,67 @@
         "GroupDescription" : "Allow access from load balancer, as well as outbound HTTP and HTTPS traffic",
         "VpcId" : { "Ref" : "VPC" },
         "SecurityGroupIngress" : [
+		  { "IpProtocol" : "tcp", "FromPort" : "22", "ToPort" : "22", "SourceSecurityGroupId" : { "Ref" : "PublicLoadBalancerSecurityGroup" } },
           { "IpProtocol" : "tcp", "FromPort" : "80", "ToPort" : "80", "SourceSecurityGroupId" : { "Ref" : "PublicLoadBalancerSecurityGroup" } } ],
         "SecurityGroupEgress" : [
            { "IpProtocol" : "tcp", "FromPort" : "80",  "ToPort" : "80",  "CidrIp" : "0.0.0.0/0" } ,
            { "IpProtocol" : "tcp", "FromPort" : "443", "ToPort" : "443", "CidrIp" : "0.0.0.0/0" } ]
       }
     },
+	
+	"LogRole": {
+            "Type": "AWS::IAM::Role",
+            "Properties": {
+                "AssumeRolePolicyDocument": {
+                    "Version": "2012-10-17",
+                    "Statement": [
+                        {
+                            "Effect": "Allow",
+                            "Principal": {
+                                "Service": [
+                                    "ec2.amazonaws.com"
+                                ]
+                            },
+                            "Action": [
+                                "sts:AssumeRole"
+                            ]
+                        }
+                    ]
+                },
+                "Path": "/",
+                "Policies": [
+                    {
+                        "PolicyName": "LogRolePolicy",
+                        "PolicyDocument": {
+                            "Version": "2012-10-17",
+                            "Statement": [
+                                {
+                                    "Effect": "Allow",
+                                    "Action": [
+                                      "logs:Create*",
+                                      "logs:PutLogEvents"
+                                    ],     
+                                    "Resource": [
+                                        "arn:aws:logs:*:*:*"
+                                    ]
+                                }
+                            ]
+                        }
+                    }
+                ]
+            }
+        },
+        "LogRoleInstanceProfile": {
+            "Type": "AWS::IAM::InstanceProfile",
+            "Properties": {
+                "Path": "/",
+                "Roles": [
+                    {
+                        "Ref": "LogRole"
+                    }
+                ]
+            }
+        },
 
 "LaunchConfig": {
       "Type" : "AWS::AutoScaling::LaunchConfiguration",
@@ -921,7 +982,7 @@
       "Metadata" : {
         "AWS::CloudFormation::Init" : {
           "configSets" : {
-            "httpd_php_install" : ["install_cfn", "install_apache_php" ]
+            "httpd_php_install" : ["install_cfn", "install_apache_php_config_cwl" ]
           },
           "install_cfn" : {
             "files": {
@@ -959,7 +1020,7 @@
             }
           },
 
-          "install_apache_php" : {
+          "install_apache_php_config_cwl" : {
             "packages" : {
               "yum" : {
                 "php"       : [],
@@ -1021,7 +1082,26 @@
 								"owner": "apache",
 								"group": "apache"
 							
-						}
+						},
+						"/tmp/cwlogs/apacheaccess.conf": {
+                                "content": {
+                                    "Fn::Join": [
+                                        "",
+                                        [
+                                            "[general]\n",
+                                            "state_file= /var/awslogs/agent-state\n",
+                                            "[/var/log/httpd/access_log]\n",
+                                            "file = /var/log/httpd/access_log\n",
+                                            "log_group_name = ", {"Ref": "ApacheAccessLogs"}, "\n",
+                                            "log_stream_name = {instance_id}/access_logs.log\n",
+                                            "datetime_format = %d/%b/%Y:%H:%M:%S"
+                                        ]
+                                    ]
+                                },
+                                "mode": "000400",
+                                "owner": "apache",
+                                "group": "apache"
+                            }
             },
         
             "services" : {
@@ -1039,6 +1119,7 @@
         "InstanceType"   : { "Ref" : "InstanceType" },
         "SecurityGroups" : [ {"Ref" : "InstanceSecurityGroup"} ],
         "KeyName"        : { "Ref" : "KeyName" },
+		"IamInstanceProfile": { "Ref": "LogRoleInstanceProfile" },
         "UserData" : { "Fn::Base64" : { "Fn::Join" : ["", [
                        "#!/bin/bash -xe\n",
                        "yum update -y aws-cfn-bootstrap\n",
@@ -1048,6 +1129,16 @@
                        "         --resource LaunchConfig ",
                        "         --configsets httpd_php_install ",
                        "         --region ", { "Ref" : "AWS::Region" }, "\n",
+					   
+					   "# Start up the cfn-hup daemon to listen for changes to the EC2 instance metadata\n",
+                       "/opt/aws/bin/cfn-hup\n",
+					   
+					   "# Get the CloudWatch Logs agent\n",
+                       "wget https://s3.amazonaws.com/aws-cloudwatch/downloads/latest/awslogs-agent-setup.py\n",
+					   
+					   "# Install the CloudWatch Logs agent\n",
+                       "python awslogs-agent-setup.py -n -r ", { "Ref" : "AWS::Region" }, " -c /tmp/cwlogs/apacheaccess.conf\n",
+                                
 
                        "/opt/aws/bin/cfn-signal -e $? ",
                        "         --stack ", { "Ref" : "AWS::StackName" },
