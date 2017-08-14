@@ -1,1 +1,5 @@
 # PyChallenge
+Little expalanation of how I implemented the requirement:
+I created a cloudformation template that spins up the infrastructure.
+To pass the access logs to S3 through Lambda (server-less offering of AWS), I chose to push them to cloud watch logs (config done by CFN template) and then the lambda function would pick them up event by event to push them to S3 bucket named after the hostname where these logs are coming from, of course to do that I had to manually (through consoile) set the trigger for this lambda fucntion to be the cloud watch group created by the infra CFN template.
+I wanted to use Fn:export and Fn:import or nested stacks to have a one-click button solution, wihtout needing to do antyhing from consoe (setting lambda trigger), but I realized that I cannot set the lambda fucntion triget from a CFN and that I might need to use something else that would call API call add-permission so I prefrred delivering the challenge this way and not go through these comlication unless I need to.

@@ -1093,7 +1093,7 @@
                                             "[/var/log/httpd/access_log]\n",
                                             "file = /var/log/httpd/access_log\n",
                                             "log_group_name = ", {"Ref": "ApacheAccessLogs"}, "\n",
-                                            "log_stream_name = {hostname}/access-logs.log\n",
+                                            "log_stream_name = {instance_id}/access_logs.log\n",
                                             "datetime_format = %d/%b/%Y:%H:%M:%S"
                                         ]
                                     ]
